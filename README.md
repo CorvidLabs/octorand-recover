@@ -16,4 +16,6 @@ bun start
 
 Connect the wallet that holds the Prime, scan, extract.
 
+Live: https://corvidlabs.github.io/octorand-recover/
+
 Details live in `web/README.md`. Reversed TEAL is in `teal/`.

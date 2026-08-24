@@ -16,6 +16,8 @@ bun start
 
 Open http://127.0.0.1:4200, connect Pera / Defly / Lute / Kibisis, then scan the wallet that holds `OG1-*` or `OG2-*`.
 
+Hosted build: https://corvidlabs.github.io/octorand-recover/
+
 ## What it calls
 
 You never call the Prime app directly. User calls go through the 2024 routers created by `NXZLEEQ…`:
