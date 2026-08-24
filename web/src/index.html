@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>Octorand Recover · CorvidLabs</title>
+        <base href="/" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta
+            name="description"
+            content="Connect an Algorand wallet and extract NFTs stored inside Octorand Gen 1 and Gen 2 Prime vaults."
+        />
+        <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+        <link rel="stylesheet" href="brand/tokens.css" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <meta name="theme-color" content="#FAF9F6" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#131619" media="(prefers-color-scheme: dark)" />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:ital,wght@0,400;0,500;0,700;0,900;1,400&family=Spline+Sans+Mono:wght@400;500&display=swap"
+            rel="stylesheet"
+        />
+        <script>
+            (() => {
+                try {
+                    const q = new URLSearchParams(location.search).get('theme');
+                    const t = q || localStorage.getItem('corvid-theme');
+                    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+                } catch (_) {}
+            })();
+        </script>
+    </head>
+    <body>
+        <app-root></app-root>
+    </body>
+</html>

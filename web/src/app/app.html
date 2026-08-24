@@ -1,0 +1,205 @@
+<a class="skip" href="#chamber">Skip to vault</a>
+
+<header class="kit-header">
+    <div class="bar">
+        <a class="id" href="https://corvidlabs.xyz" rel="noreferrer">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CorvidLabs">
+                <circle cx="24" cy="32" r="18" fill="currentColor" />
+                <path d="M33 21.5 L58.5 29.5 L33 39.5 Z" fill="currentColor" />
+                <circle class="eye" cx="27.5" cy="26" r="3" />
+            </svg>
+            <span>Corvid<span class="labs">Labs</span></span>
+        </a>
+        <p class="product">Octorand recover</p>
+        <app-theme-toggle />
+    </div>
+</header>
+
+<div class="page">
+    <section class="hero">
+        <p class="kicker">Octorand recover</p>
+        <h1>Open the Prime.<br /><em>Take what it is holding.</em></h1>
+        <p class="lede">
+            Each Octorand Prime is still a live Algorand app. The site is gone. The vault contract is not. Connect the
+            wallet that holds Gen 1 or Gen 2, then pull NFTs, OCTO, and free ALGO back out.
+        </p>
+        <app-wallet-bar />
+    </section>
+
+    <section class="lookup" aria-labelledby="lookup-heading">
+        <h2 id="lookup-heading">Whose Primes</h2>
+        <form class="lookup-form" (submit)="$event.preventDefault(); scanLookup()">
+            <label class="field">
+                <span>Algorand address</span>
+                <input
+                    name="address"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    [ngModel]="lookup()"
+                    (ngModelChange)="lookup.set($event)"
+                    placeholder="Paste a wallet or use the connected account"
+                />
+            </label>
+            <button type="submit" class="primary" [disabled]="recover.scanning() || lookup().trim().length === 0">
+                {{ recover.scanning() ? 'Scanning…' : 'Scan Primes' }}
+            </button>
+        </form>
+        <p class="hint">Anyone can inspect a vault. Only the wallet that holds the Prime remint can extract.</p>
+    </section>
+
+    <p class="status" role="status" aria-live="polite">
+        {{ recover.progress() || wallet.status() }}
+        @if (recover.lastTxId(); as txId) {
+            <a [href]="explorerTx(txId)" target="_blank" rel="noreferrer">View transaction</a>
+        }
+    </p>
+
+    <main id="chamber" class="chamber">
+        <nav class="primes" aria-label="Primes in this wallet">
+            @if (recover.primes().length === 0 && !recover.scanning()) {
+                <p class="empty">No Primes here yet. Connect or paste a wallet that still holds OG1 / OG2.</p>
+            }
+            @for (prime of recover.primes(); track prime.appId) {
+                <button
+                    type="button"
+                    class="prime"
+                    [class.selected]="recover.selectedAppId() === prime.appId"
+                    [class.spent]="!hasExtractable(prime)"
+                    (click)="recover.select(prime.appId)"
+                >
+                    <span class="gen">{{ recover.generationLabel(prime.generation) }} #{{ prime.state.index }}</span>
+                    <strong>{{ prime.state.letters || prime.unit }}</strong>
+                    <span class="count">{{ extractableLabel(prime) }}</span>
+                </button>
+            }
+        </nav>
+
+        @if (selected(); as prime) {
+            <article class="vault">
+                <header class="vault-head">
+                    <div class="index-block" aria-hidden="true">
+                        <span>{{ recover.generationLabel(prime.generation) }}</span>
+                        <strong>#{{ prime.state.index }}</strong>
+                    </div>
+                    <div>
+                        <p class="eyebrow">{{ recover.generationLabel(prime.generation) }} vault</p>
+                        <h2>{{ prime.name }}</h2>
+                        <p class="letters">{{ prime.state.letters }}</p>
+                        <p class="meta">
+                            App
+                            <a [href]="explorerApp(prime.appId)" target="_blank" rel="noreferrer">{{ prime.appId }}</a>
+                            · Remint
+                            <a [href]="explorerAsset(prime.state.remintAssetId)" target="_blank" rel="noreferrer">{{
+                                prime.state.remintAssetId
+                            }}</a>
+                            ·
+                            <a [href]="explorerAccount(prime.vaultAddress)" target="_blank" rel="noreferrer">{{
+                                shortAddress(prime.vaultAddress)
+                            }}</a>
+                        </p>
+                    </div>
+                </header>
+
+                <dl class="stats">
+                    <div>
+                        <dt>Free ALGO</dt>
+                        <dd>{{ formatAlgo(algoSurplus()) }}</dd>
+                    </div>
+                    <div>
+                        <dt>OCTO</dt>
+                        <dd>{{ formatOcto(prime.vaultOcto) }}</dd>
+                    </div>
+                    <div>
+                        <dt>Locked min</dt>
+                        <dd>{{ formatAlgo(prime.vaultMinBalance) }}</dd>
+                    </div>
+                </dl>
+
+                <div class="actions">
+                    <button
+                        type="button"
+                        class="primary"
+                        [disabled]="!canExtract() || recover.extracting() || withdrawable().length === 0"
+                        (click)="recover.extractAll(prime)"
+                    >
+                        Extract all NFTs
+                    </button>
+                    <button
+                        type="button"
+                        class="ghost"
+                        [disabled]="!canExtract() || recover.extracting() || prime.vaultOcto === 0"
+                        (click)="recover.extractOcto(prime)"
+                    >
+                        Take OCTO
+                    </button>
+                    <button
+                        type="button"
+                        class="ghost"
+                        [disabled]="!canExtract() || recover.extracting() || algoSurplus() === 0"
+                        (click)="recover.extractAlgo(prime)"
+                    >
+                        Take free ALGO
+                    </button>
+                </div>
+                @if (!canExtract()) {
+                    <p class="hint">Connect the wallet that holds {{ prime.unit }} to extract.</p>
+                }
+
+                <h3>Held in the vault</h3>
+                @if (withdrawable().length === 0) {
+                    <p class="empty">No extra ASAs in this vault. OCTO and the original Prime stay listed below.</p>
+                }
+                <ul class="holdings">
+                    @for (item of withdrawable(); track item.assetId) {
+                        <li>
+                            <div>
+                                <a [href]="explorerAsset(item.assetId)" target="_blank" rel="noreferrer">{{ item.name }}</a>
+                                <p>
+                                    {{ item.unit }} · {{ item.amount }}
+                                    @if (item.nestedPrime) {
+                                        <span class="tag">Prime inside Prime</span>
+                                    }
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                class="ghost"
+                                [disabled]="!canExtract() || recover.extracting()"
+                                (click)="recover.extractAsset(prime, item.assetId)"
+                            >
+                                Extract
+                            </button>
+                        </li>
+                    }
+                </ul>
+
+                @if (locked().length > 0) {
+                    <h3>Bound to the Prime</h3>
+                    <p class="hint">
+                        The remint, the original 2022 ASA, and OCTO identity slots cannot use the NFT extract path. Use
+                        Take OCTO for the token balance.
+                    </p>
+                    <ul class="holdings locked">
+                        @for (item of locked(); track item.assetId) {
+                            <li>
+                                <div>
+                                    <a [href]="explorerAsset(item.assetId)" target="_blank" rel="noreferrer">{{
+                                        item.name
+                                    }}</a>
+                                    <p>{{ item.unit }} · {{ item.amount }}</p>
+                                </div>
+                            </li>
+                        }
+                    </ul>
+                }
+            </article>
+        }
+    </main>
+
+    <details class="debug" open>
+        <summary>Local debug log</summary>
+        <p class="hint">This is the local app on :4200. Extract failures, algod 400 bodies, and simulate output print here.</p>
+        <pre>{{ debugText() || 'Waiting… connect a wallet or scan an address.' }}</pre>
+    </details>
+</div>
