@@ -16,5 +16,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Trust's lifecycle stage runs `fledge lanes run verify`, which installs,
+      # tests and builds with bun.
+      - uses: oven-sh/setup-bun@v2
+
       - uses: CorvidLabs/trust@v1.2.0
         id: trust
