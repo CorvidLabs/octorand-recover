@@ -1,0 +1,12 @@
+[project]
+name = "octorand-recover"
+language = "typescript"
+
+[tasks]
+install = "cd web && bun install --frozen-lockfile"
+test = "cd web && bun test src/lib"
+build = "cd web && bun run build"
+
+[lanes.verify]
+description = "Install, unit-test, and build the Octorand Recover web app"
+steps = ["install", "test", "build"]
