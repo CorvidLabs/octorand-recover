@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
+    ROUTERS,
     SELECTORS,
     decodeLetters,
     decodePrimeState,
@@ -10,9 +11,12 @@ import {
     isLockedVaultAsset,
     isOctorandPrime,
     maybePrimeAssetId,
+    canClaimRemint,
     compareByExtractable,
     extractableLabel,
     hasExtractable,
+    mergeHeldPrimes,
+    primeStateOwnsAsset,
     vaultWithdrawForeignAssets,
     vaultWithdrawRefs,
 } from './octorand';
@@ -54,8 +58,42 @@ test('decodes P1 letters and ids', () => {
     expect(state.remintAssetId).toBe(2141541750);
     expect(state.originalAssetId).toBe(559344022);
     expect(state.letters).toBe('FLAMINGO');
+    expect(state.claimOpen).toBe(true);
+    p1[47] = 1;
+    expect(decodePrimeState(p1).claimOpen).toBe(false);
+    expect(primeStateOwnsAsset(state, 2141541750)).toBe(true);
+    expect(primeStateOwnsAsset(state, 559344022)).toBe(true);
+    expect(primeStateOwnsAsset(state, 559219992)).toBe(false);
     expect(isLockedVaultAsset(559344022, state)).toBe(true);
     expect(isLockedVaultAsset(410829725, state)).toBe(false);
+});
+
+test('an unclaimed prime keeps the claim slot open', () => {
+    const p1 = new Uint8Array(48);
+    const view = new DataView(p1.buffer);
+    view.setBigUint64(0, 5131n);
+    view.setBigUint64(16, 2143376645n);
+    view.setBigUint64(24, 626516065n);
+    const state = decodePrimeState(p1);
+    expect(state.index).toBe(5131);
+    expect(state.claimOpen).toBe(true);
+    expect(canClaimRemint({ holdsOriginal: true, holdsRemint: false, state })).toBe(true);
+    expect(canClaimRemint({ holdsOriginal: true, holdsRemint: true, state })).toBe(false);
+    expect(canClaimRemint({ holdsOriginal: false, holdsRemint: false, state })).toBe(false);
+});
+
+test('merges a prime found from both the original and the remint', () => {
+    const original = { appId: 2147396881, holdsOriginal: true, holdsRemint: false, unit: 'OP2-5131' };
+    const remint = { appId: 2147396881, holdsOriginal: false, holdsRemint: true, unit: 'OG2-5131' };
+    expect(mergeHeldPrimes([original, remint])).toEqual([
+        { appId: 2147396881, holdsOriginal: true, holdsRemint: true, unit: 'OG2-5131' },
+    ]);
+});
+
+test('claim remint selector matches the live router', () => {
+    expect(Buffer.from(SELECTORS.claimRemint).toString('hex')).toBe('a0cba8dd');
+    expect(ROUTERS.gen1.claimRemint).toBe(2141434605);
+    expect(ROUTERS.gen2.claimRemint).toBe(2141439838);
 });
 
 test('encodes app-call index bytes', () => {

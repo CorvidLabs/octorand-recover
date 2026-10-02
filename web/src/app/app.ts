@@ -1,7 +1,14 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { debugLogs } from '../lib/log';
-import { extractableLabel, formatAlgo, formatOcto, hasExtractable, shortAddress } from '../lib/octorand';
+import {
+    canClaimRemint,
+    extractableLabel,
+    formatAlgo,
+    formatOcto,
+    hasExtractable,
+    shortAddress,
+} from '../lib/octorand';
 import { RecoverService } from './recover.service';
 import { ThemeToggle } from './theme-toggle';
 import { WalletBar } from './wallet-bar';
@@ -25,15 +32,32 @@ export class App {
     protected readonly hasExtractable = hasExtractable;
     protected readonly debugText = computed(() => debugLogs().join('\n'));
 
-    protected readonly canExtract = computed(() => {
+    protected readonly canSign = computed(() => {
         const connected = this.wallet.address();
         const scanned = this.recover.scannedAddress();
-        return connected !== null && scanned !== null && connected === scanned;
+        const auth = this.recover.scannedAuthAddress();
+        if (connected === null || scanned === null) {
+            return false;
+        }
+        return connected === scanned || auth === connected;
     });
 
     protected readonly selected = computed(() => {
         const appId = this.recover.selectedAppId();
         return this.recover.primes().find((prime) => prime.appId === appId);
+    });
+
+    protected readonly canExtract = computed(() => {
+        const prime = this.selected();
+        return this.canSign() && prime !== undefined && prime.holdsRemint;
+    });
+
+    protected readonly canClaim = computed(() => {
+        const prime = this.selected();
+        if (prime === undefined || !this.canSign()) {
+            return false;
+        }
+        return canClaimRemint(prime);
     });
 
     protected readonly withdrawable = computed(() => {

@@ -21,6 +21,7 @@ export class RecoverService {
     public readonly primes = signal<PrimeRecord[]>([]);
     public readonly selectedAppId = signal<number | null>(null);
     public readonly scannedAddress = signal<string | null>(null);
+    public readonly scannedAuthAddress = signal<string | null>(null);
     public readonly scanning = signal(false);
     public readonly extracting = signal(false);
     public readonly progress = signal('');
@@ -42,6 +43,7 @@ export class RecoverService {
                 log('scan progress', message);
             });
             this.scannedAddress.set(address);
+            this.scannedAuthAddress.set(await this.lookupAuthAddress(address));
             this.primes.set(primes);
             const keep = this.selectedAppId();
             this.selectedAppId.set(
@@ -71,6 +73,7 @@ export class RecoverService {
             this.progress.set(error instanceof Error ? error.message : 'Scan failed.');
             this.primes.set([]);
             this.selectedAppId.set(null);
+            this.scannedAuthAddress.set(null);
         } finally {
             this.scanning.set(false);
         }
@@ -80,10 +83,60 @@ export class RecoverService {
         this.selectedAppId.set(appId);
     }
 
+    public async claimRemint(prime: PrimeRecord): Promise<void> {
+        if (!prime.state.claimOpen) {
+            this.progress.set('The remint for this Prime was already claimed.');
+            return;
+        }
+        const confirmed = await this.run('Claiming the remint…', async () => {
+            const sender = await this.requireHolder(prime);
+            const held = await this.wallet.heldAssetIds(sender);
+            if (!held.has(prime.state.originalAssetId)) {
+                throw new Error('This wallet must hold the original Prime to claim the remint.');
+            }
+            if (held.has(prime.state.remintAssetId)) {
+                throw new Error('This wallet already holds the remint.');
+            }
+            const opted = await this.wallet.optedAssetIds(sender);
+            const params = await this.suggestedParams();
+            const minFee = this.minFee(params);
+            const txns: algosdk.Transaction[] = [];
+            if (!opted.has(prime.state.remintAssetId)) {
+                txns.push(this.optInTxn(sender, prime.state.remintAssetId, params, minFee));
+            }
+            // The router reads the next group transaction. That axfer must follow the app call.
+            // The opt-in has to come first so the inner transfer of the remint can land.
+            txns.push(
+                this.appCall({
+                    sender,
+                    appIndex: routersFor(prime.generation).claimRemint,
+                    appArgs: [SELECTORS.claimRemint, encodeIndexByte(1)],
+                    foreignApps: [prime.appId],
+                    foreignAssets: [prime.state.remintAssetId],
+                    fee: Math.max(3000, minFee * 3),
+                    params,
+                }),
+            );
+            txns.push(
+                algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
+                    sender,
+                    receiver: prime.vaultAddress,
+                    assetIndex: prime.state.originalAssetId,
+                    amount: 1,
+                    suggestedParams: { ...params, flatFee: true, fee: minFee },
+                }),
+            );
+            return this.wallet.signAndSend(txns);
+        });
+        if (confirmed) {
+            await this.refresh(prime);
+        }
+    }
+
     public async extractAsset(prime: PrimeRecord, assetId: number): Promise<void> {
         const confirmed = await this.run(`Extracting asset ${assetId}…`, async () => {
-            const sender = await this.requireSender(prime);
-            const held = await this.wallet.heldAssetIds(sender);
+            const sender = await this.requireRemintHolder(prime);
+            const held = await this.wallet.optedAssetIds(sender);
             const txns = await this.buildVaultWithdraw(sender, prime, [assetId], held);
             return this.wallet.signAndSend(txns);
         });
@@ -98,8 +151,8 @@ export class RecoverService {
             this.progress.set('Nothing withdrawable in this vault.');
             return;
         }
-        const sender = await this.requireSender(prime);
-        const held = await this.wallet.heldAssetIds(sender);
+        const sender = await this.requireRemintHolder(prime);
+        const held = await this.wallet.optedAssetIds(sender);
         const assetIds = withdrawable.map((holding) => holding.assetId);
         const chunks: number[][] = [];
         for (let index = 0; index < assetIds.length; index += 8) {
@@ -132,8 +185,8 @@ export class RecoverService {
             return;
         }
         const confirmed = await this.run(`Withdrawing OCTO…`, async () => {
-            const sender = await this.requireSender(prime);
-            const held = await this.wallet.heldAssetIds(sender);
+            const sender = await this.requireRemintHolder(prime);
+            const held = await this.wallet.optedAssetIds(sender);
             const params = await this.suggestedParams();
             const minFee = this.minFee(params);
             const txns: algosdk.Transaction[] = [];
@@ -165,7 +218,7 @@ export class RecoverService {
             return;
         }
         const confirmed = await this.run(`Withdrawing ALGO…`, async () => {
-            const sender = await this.requireSender(prime);
+            const sender = await this.requireRemintHolder(prime);
             const params = await this.suggestedParams();
             const minFee = this.minFee(params);
             const txn = this.appCall({
@@ -213,16 +266,45 @@ export class RecoverService {
         }
     }
 
-    private async requireSender(prime: PrimeRecord): Promise<string> {
-        const sender = this.wallet.address();
-        if (sender === null) {
+    private async lookupAuthAddress(address: string): Promise<string | null> {
+        try {
+            const info = await this.wallet.algod.accountInformation(address).do();
+            const auth = info.authAddr?.toString() ?? null;
+            if (auth === null || auth === address) {
+                return null;
+            }
+            log('rekeyed prime account', { address, auth });
+            return auth;
+        } catch (error) {
+            logError('auth address', error);
+            return null;
+        }
+    }
+
+    private async requireHolder(prime: PrimeRecord): Promise<string> {
+        const connected = this.wallet.address();
+        const holder = this.scannedAddress();
+        if (connected === null || holder === null) {
             throw new Error('Connect the wallet that holds this Prime.');
         }
-        const held = await this.wallet.heldAssetIds(sender);
-        if (held.has(prime.state.remintAssetId) || (sender === this.scannedAddress() && prime.amount > 0)) {
-            return sender;
+        const auth = this.scannedAuthAddress();
+        if (connected !== holder && connected !== auth) {
+            throw new Error('Connect the wallet that holds this Prime.');
         }
-        throw new Error('The connected wallet must hold this Prime remint to open its vault.');
+        const held = await this.wallet.heldAssetIds(holder);
+        if (held.has(prime.state.remintAssetId) || held.has(prime.state.originalAssetId)) {
+            return holder;
+        }
+        throw new Error('The connected wallet must hold this Prime to open its vault.');
+    }
+
+    private async requireRemintHolder(prime: PrimeRecord): Promise<string> {
+        const sender = await this.requireHolder(prime);
+        const held = await this.wallet.heldAssetIds(sender);
+        if (!held.has(prime.state.remintAssetId)) {
+            throw new Error('Claim the remint before withdrawing from this vault.');
+        }
+        return sender;
     }
 
     private async suggestedParams(): Promise<algosdk.SuggestedParams> {

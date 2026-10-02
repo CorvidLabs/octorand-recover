@@ -45,7 +45,10 @@
                 {{ recover.scanning() ? 'Scanning…' : 'Scan Primes' }}
             </button>
         </form>
-        <p class="hint">Anyone can inspect a vault. Only the wallet that holds the Prime remint can extract.</p>
+        <p class="hint">
+            Anyone can inspect a vault. Withdrawals use the remint. An original Prime can claim that remint while it is
+            still in the vault.
+        </p>
     </section>
 
     <p class="status" role="status" aria-live="polite">
@@ -58,7 +61,7 @@
     <main id="chamber" class="chamber">
         <nav class="primes" aria-label="Primes in this wallet">
             @if (recover.primes().length === 0 && !recover.scanning()) {
-                <p class="empty">No Primes here yet. Connect or paste a wallet that still holds OG1 / OG2.</p>
+                <p class="empty">No Primes here yet. Connect or paste a wallet that still holds an Octorand Prime.</p>
             }
             @for (prime of recover.primes(); track prime.appId) {
                 <button
@@ -117,6 +120,16 @@
                 </dl>
 
                 <div class="actions">
+                    @if (canClaim()) {
+                        <button
+                            type="button"
+                            class="primary"
+                            [disabled]="recover.extracting()"
+                            (click)="recover.claimRemint(prime)"
+                        >
+                            Claim remint
+                        </button>
+                    }
                     <button
                         type="button"
                         class="primary"
@@ -142,8 +155,29 @@
                         Take free ALGO
                     </button>
                 </div>
-                @if (!canExtract()) {
-                    <p class="hint">Connect the wallet that holds {{ prime.unit }} to extract.</p>
+                @if (canClaim()) {
+                    <p class="hint">
+                        This wallet holds {{ prime.unit }}, the original Prime. Claim sends it into the vault and returns
+                        the remint here. Withdrawals then use that remint.
+                    </p>
+                } @else if (prime.state.claimOpen && prime.holdsOriginal && !prime.holdsRemint) {
+                    <p class="hint">
+                        This wallet holds {{ prime.unit }}. Connect it to claim the remint out of the vault.
+                        @if (recover.scannedAuthAddress(); as auth) {
+                            This account signs with {{ shortAddress(auth) }}.
+                        }
+                    </p>
+                } @else if (!prime.holdsRemint && prime.holdsOriginal) {
+                    <p class="hint">
+                        This wallet holds the original Prime. The remint that opens the vault was already claimed.
+                    </p>
+                } @else if (!canSign()) {
+                    <p class="hint">
+                        Connect the wallet that holds {{ prime.unit }} to extract.
+                        @if (recover.scannedAuthAddress(); as auth) {
+                            This account signs with {{ shortAddress(auth) }}.
+                        }
+                    </p>
                 }
 
                 <h3>Held in the vault</h3>

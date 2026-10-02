@@ -114,6 +114,15 @@ export class WalletService {
         return held;
     }
 
+    public async optedAssetIds(address: string): Promise<Set<number>> {
+        const info = await this.algod.accountInformation(address).do();
+        const opted = new Set<number>();
+        for (const holding of info.assets ?? []) {
+            opted.add(Number(holding.assetId));
+        }
+        return opted;
+    }
+
     public async signAndSend(txns: algosdk.Transaction[]): Promise<string> {
         if (this.address() === null) {
             throw new Error('Connect a wallet first.');
@@ -151,8 +160,7 @@ export class WalletService {
     }
 
     private async simulate(txns: algosdk.Transaction[]): Promise<void> {
-        const encoded = txns.map((txn) => algosdk.encodeUnsignedSimulateTransaction(txn));
-        const decoded = encoded.map((bytes) => algosdk.decodeSignedTransaction(bytes));
+        const decoded = await this.unsignedWithAuth(txns);
         const request = new algosdk.modelsv2.SimulateRequest({
             txnGroups: [new algosdk.modelsv2.SimulateRequestTransactionGroup({ txns: decoded })],
             allowEmptySignatures: true,
@@ -188,6 +196,25 @@ export class WalletService {
                 }`,
             );
         }
+    }
+
+    private async unsignedWithAuth(txns: algosdk.Transaction[]): Promise<algosdk.SignedTransaction[]> {
+        const authBySender = new Map<string, algosdk.Address | undefined>();
+        const signed: algosdk.SignedTransaction[] = [];
+        for (const txn of txns) {
+            const sender = txn.sender.toString();
+            if (!authBySender.has(sender)) {
+                const info = await this.algod.accountInformation(sender).do();
+                authBySender.set(sender, info.authAddr);
+            }
+            const auth = authBySender.get(sender);
+            const sgnr = auth !== undefined && !auth.equals(txn.sender) ? auth : undefined;
+            if (sgnr !== undefined) {
+                log('simulate rekeyed sender', { sender, auth: sgnr.toString() });
+            }
+            signed.push(new algosdk.SignedTransaction({ txn, sgnr }));
+        }
+        return signed;
     }
 
     private snapshotWallets(): WalletOption[] {

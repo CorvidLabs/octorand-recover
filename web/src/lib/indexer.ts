@@ -6,6 +6,9 @@ import {
     isLockedVaultAsset,
     isOctorandPrime,
     maybePrimeAssetId,
+    mergeHeldPrimes,
+    OCTO_ASA,
+    primeStateOwnsAsset,
     type PrimeGeneration,
     type PrimeState,
     type VaultHolding,
@@ -27,6 +30,8 @@ export interface PrimeRecord {
     vaultMinBalance: number;
     vaultOcto: number;
     holdings: VaultHolding[];
+    holdsRemint: boolean;
+    holdsOriginal: boolean;
 }
 
 interface IndexerAsset {
@@ -155,7 +160,16 @@ export async function accountHoldsAsset(address: string, assetId: number): Promi
 }
 
 async function applicationGlobal(appId: number): Promise<{ p1: Uint8Array; p2: Uint8Array } | undefined> {
-    const data = await getJson(`/v2/applications/${appId}`);
+    let data: Record<string, unknown>;
+    try {
+        data = await getJson(`/v2/applications/${appId}`);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('Indexer 404') || message.includes('Indexer 400')) {
+            return undefined;
+        }
+        throw error;
+    }
     const application = asRecord(data['application']);
     const params = asRecord(application['params']);
     const state = asArray(params['global-state']);
@@ -176,9 +190,12 @@ async function applicationGlobal(appId: number): Promise<{ p1: Uint8Array; p2: U
 
 export async function findPrimeAppId(assetId: number): Promise<number | undefined> {
     let next: string | undefined;
-    for (let page = 0; page < 6; page += 1) {
+    const seen = new Set<number>();
+    for (let page = 0; page < 20; page += 1) {
         const suffix = next === undefined ? '' : `&next=${encodeURIComponent(next)}`;
-        const data = await getJson(`/v2/transactions?asset-id=${assetId}&limit=30${suffix}`);
+        // asset-id + tx-type=appl returns nothing on the public indexer. Foreign-asset
+        // app calls only show up in the unfiltered asset history, oldest first.
+        const data = await getJson(`/v2/transactions?asset-id=${assetId}&limit=100${suffix}`);
         const transactions = asArray(data['transactions']);
         for (const row of transactions) {
             const tx = asRecord(row);
@@ -188,13 +205,18 @@ export async function findPrimeAppId(assetId: number): Promise<number | undefine
             const appl = asRecord(tx['application-transaction']);
             const appId = typeof appl['application-id'] === 'number' ? appl['application-id'] : 0;
             const created = typeof tx['created-application-index'] === 'number' ? tx['created-application-index'] : 0;
-            const candidates = [created, appId, ...asArray(appl['foreign-apps']).filter((id): id is number => typeof id === 'number')];
+            const foreignApps = asArray(appl['foreign-apps']).filter((id): id is number => typeof id === 'number');
+            const candidates = [created, appId, ...foreignApps];
             for (const candidate of candidates) {
-                if (candidate <= 0) {
+                if (candidate <= 0 || seen.has(candidate)) {
                     continue;
                 }
+                seen.add(candidate);
                 const global = await applicationGlobal(candidate);
-                if (global !== undefined) {
+                if (global === undefined) {
+                    continue;
+                }
+                if (primeStateOwnsAsset(decodePrimeState(global.p1), assetId)) {
                     return candidate;
                 }
             }
@@ -282,25 +304,54 @@ export async function loadPrime(assetId: number, heldAmount: number): Promise<Pr
         vaultMinBalance,
         vaultOcto: octoHolding?.amount ?? 0,
         holdings,
+        holdsRemint: assetId === state.remintAssetId,
+        holdsOriginal: assetId === state.originalAssetId,
     };
 }
 
 export async function scanAddressForPrimes(address: string, onProgress?: (message: string) => void): Promise<PrimeRecord[]> {
     onProgress?.('Reading wallet assets…');
     const held = await accountAssetIds(address);
-    const candidates = held.filter((item) => maybePrimeAssetId(item.assetId));
-    onProgress?.(`Checking ${candidates.length} possible Primes…`);
-    const primes: PrimeRecord[] = [];
-    for (const candidate of candidates) {
+    const candidates = held
+        .filter((item) => item.assetId !== OCTO_ASA)
+        .sort((left, right) => Number(maybePrimeAssetId(right.assetId)) - Number(maybePrimeAssetId(left.assetId)));
+    onProgress?.(`Checking ${candidates.length} assets for Primes…`);
+    let finished = 0;
+    const loaded = await mapPool(candidates, 4, async (candidate) => {
         try {
-            const prime = await loadPrime(candidate.assetId, candidate.amount);
-            if (prime !== undefined) {
-                primes.push(prime);
-            }
+            return await loadPrime(candidate.assetId, candidate.amount);
         } catch {
-            // Skip assets that are not live Prime contracts.
+            return undefined;
+        } finally {
+            finished += 1;
+            if (finished === candidates.length || finished % 25 === 0) {
+                onProgress?.(`Checked ${finished} of ${candidates.length} assets…`);
+            }
         }
-    }
+    });
+    const primes = mergeHeldPrimes(loaded.filter((prime): prime is PrimeRecord => prime !== undefined));
     primes.sort(compareByExtractable);
     return primes;
+}
+
+async function mapPool<Value, Output>(
+    items: Value[],
+    limit: number,
+    worker: (item: Value) => Promise<Output>,
+): Promise<Output[]> {
+    const results = new Array<Output>(items.length);
+    let cursor = 0;
+    const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (cursor < items.length) {
+            const index = cursor;
+            cursor += 1;
+            const item = items[index];
+            if (item === undefined) {
+                continue;
+            }
+            results[index] = await worker(item);
+        }
+    });
+    await Promise.all(runners);
+    return results;
 }

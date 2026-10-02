@@ -11,12 +11,14 @@ export const ROUTERS = {
         vaultOptIn: 2141433859,
         octoWithdraw: 2141433746,
         algoWithdraw: 2141435280,
+        claimRemint: 2141434605,
     },
     gen2: {
         vaultWithdraw: 2141438961,
         vaultOptIn: 2141437760,
         octoWithdraw: 2141437705,
         algoWithdraw: 2141439903,
+        claimRemint: 2141439838,
     },
 } as const;
 
@@ -25,6 +27,7 @@ export const SELECTORS = {
     vaultOptIn: Uint8Array.of(0x46, 0x37, 0x56, 0xe8),
     octoWithdraw: Uint8Array.of(0xa1, 0x53, 0xff, 0x0d),
     algoWithdraw: Uint8Array.of(0x32, 0x50, 0x6c, 0x70),
+    claimRemint: Uint8Array.of(0xa0, 0xcb, 0xa8, 0xdd),
 } as const;
 
 export type PrimeGeneration = 'gen1' | 'gen2';
@@ -35,6 +38,8 @@ export interface PrimeState {
     remintAssetId: number;
     originalAssetId: number;
     letters: string;
+    /** P1 byte 47 is still 0, so the remint can be claimed out of the vault. */
+    claimOpen: boolean;
 }
 
 export interface VaultHolding {
@@ -69,7 +74,46 @@ export function decodePrimeState(p1: Uint8Array): PrimeState {
         remintAssetId: readUint64(p1, 16),
         originalAssetId: readUint64(p1, 24),
         letters: decodeLetters(p1),
+        claimOpen: p1.length > 47 && p1[47] === 0,
     };
+}
+
+export function primeStateOwnsAsset(
+    state: Pick<PrimeState, 'remintAssetId' | 'originalAssetId'>,
+    assetId: number,
+): boolean {
+    return assetId > 0 && (state.remintAssetId === assetId || state.originalAssetId === assetId);
+}
+
+export function canClaimRemint(prime: {
+    holdsOriginal: boolean;
+    holdsRemint: boolean;
+    state: Pick<PrimeState, 'claimOpen'>;
+}): boolean {
+    return prime.state.claimOpen && prime.holdsOriginal && !prime.holdsRemint;
+}
+
+export interface HeldPrimeIdentity {
+    appId: number;
+    holdsRemint: boolean;
+    holdsOriginal: boolean;
+}
+
+/** One vault can be discovered from both the original ASA and the remint. */
+export function mergeHeldPrimes<RecordType extends HeldPrimeIdentity>(records: RecordType[]): RecordType[] {
+    const byApp = new Map<number, RecordType>();
+    for (const record of records) {
+        const existing = byApp.get(record.appId);
+        if (existing === undefined) {
+            byApp.set(record.appId, record);
+            continue;
+        }
+        const holdsRemint = existing.holdsRemint || record.holdsRemint;
+        const holdsOriginal = existing.holdsOriginal || record.holdsOriginal;
+        const preferred = record.holdsRemint && !existing.holdsRemint ? record : existing;
+        byApp.set(record.appId, { ...preferred, holdsRemint, holdsOriginal });
+    }
+    return [...byApp.values()];
 }
 
 export function isOctorandPrime(name: string, unit: string): boolean {
