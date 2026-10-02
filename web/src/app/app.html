@@ -20,8 +20,9 @@
         <p class="kicker">Octorand recover</p>
         <h1>Open the Prime.<br /><em>Take what it is holding.</em></h1>
         <p class="lede">
-            Each Octorand Prime is still a live Algorand app. The site is gone. The vault contract is not. Connect the
-            wallet that holds Gen 1 or Gen 2, then pull NFTs, OCTO, and free ALGO back out.
+            Each Octorand Prime is still a live Algorand app. The site is gone. The vault contract is not. Holding the
+            original Prime claims the remint by sending that ASA into the vault. The remint is what withdraws OCTO,
+            other ASAs, and free ALGO.
         </p>
         <app-wallet-bar />
     </section>
@@ -211,8 +212,8 @@
                 @if (locked().length > 0) {
                     <h3>Bound to the Prime</h3>
                     <p class="hint">
-                        The remint, the original 2022 ASA, and OCTO identity slots cannot use the NFT extract path. Use
-                        Take OCTO for the token balance.
+                        The remint, the original Prime, and the OCTO asset stay bound to the vault. Take OCTO pays the
+                        token balance out. The original ASA stays in the vault after claim.
                     </p>
                     <ul class="holdings locked">
                         @for (item of locked(); track item.assetId) {
